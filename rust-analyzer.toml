@@ -1,0 +1,21 @@
+[cargo]
+buildScripts.enable = false
+
+[procMacro]
+enable = false
+
+[diagnostics]
+enable = false
+
+[checkOnSave]
+enable = false
+
+[inlayHints]
+enable = false
+
+[completion]
+autoimport.enable = false
+autoself.enable = false
+
+[server]
+extraEnv = { RA_MEMORY_LIMIT = "1000" }
