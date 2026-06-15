@@ -162,7 +162,8 @@ impl<T: Float> GPT<T> {
             <T as ferrotorch::Element>::zero(),
             T::from(t).unwrap(),
             <T as ferrotorch::Element>::one(),
-        )?.to(idx.device())?;
+        )?
+        .to(idx.device())?;
         let pos_emb = self.transformer.wpe.forward(&pos)?;
 
         let mut x = tok_emb.add_t(&pos_emb)?;
@@ -376,7 +377,12 @@ impl<T: Float> Module<T> for Block<T> {
     }
 
     fn buffers_mut(&mut self) -> Vec<&mut Buffer<T>> {
-        vec![]
+        let mut out = Vec::new();
+        out.extend(self.ln_1.buffers_mut());
+        out.extend(self.attn.buffers_mut());
+        out.extend(self.ln_2.buffers_mut());
+        out.extend(self.mlp.buffers_mut());
+        out
     }
 }
 
