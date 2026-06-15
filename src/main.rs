@@ -162,7 +162,7 @@ impl<T: Float> GPT<T> {
             <T as ferrotorch::Element>::zero(),
             T::from(t).unwrap(),
             <T as ferrotorch::Element>::one(),
-        )?;
+        )?.to(idx.device())?;
         let pos_emb = self.transformer.wpe.forward(&pos)?;
 
         let mut x = tok_emb.add_t(&pos_emb)?;
@@ -222,7 +222,7 @@ impl<T: Float> GPT<T> {
             }
 
             let new_col_data: Vec<T> = next_ids.iter().map(|&id| T::from(id).unwrap()).collect();
-            let new_col = from_vec(new_col_data, &[b, 1])?;
+            let new_col = from_vec(new_col_data, &[b, 1])?.to(batch.device())?;
 
             batch = cat(&[batch, new_col], 1)?;
         }
