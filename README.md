@@ -13,6 +13,5 @@ cargo run -- "Once upon a time"
 
 ## Next
 
-TODO - Execute on CUDA (or just non-CPU device)  
 TODO - Training  
 TODO - "Let's make it fast"  
