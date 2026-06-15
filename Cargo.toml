@@ -4,4 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-ferrotorch = { version = "0.5.9", features = ["tokenize"] }
+ferrotorch = { version = "0.5.9", features = ["tokenize", "gpu"] }
+cudarc = { version = "0.19", features = ["cuda-12060"] }
+libloading = "0.9"

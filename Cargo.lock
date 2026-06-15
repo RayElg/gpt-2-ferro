@@ -334,7 +334,7 @@ checksum = "0b023947811758c97c59bf9d1c188fd619ad4718dcaa767947df1cadb14f39f4"
 dependencies = [
  "glob",
  "libc",
- "libloading",
+ "libloading 0.8.9",
 ]
 
 [[package]]
@@ -640,6 +640,15 @@ checksum = "78c8292055d1c1df0cce5d180393dc8cce0abec0a7102adb6c7b1eef6016d60a"
 dependencies = [
  "generic-array",
  "typenum",
+]
+
+[[package]]
+name = "cudarc"
+version = "0.19.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1cea5f10a99e025c1b44ae2354c2d8326b25ddbd0baf76bde8e55cfd4018a2cc"
+dependencies = [
+ "libloading 0.9.0",
 ]
 
 [[package]]
@@ -1048,6 +1057,7 @@ dependencies = [
  "ferrotorch-core",
  "ferrotorch-data",
  "ferrotorch-distributions",
+ "ferrotorch-gpu",
  "ferrotorch-hub",
  "ferrotorch-jit",
  "ferrotorch-jit-script",
@@ -1106,6 +1116,20 @@ checksum = "665268a33e58f0f033bfe0dd9951d89fc12af1ade2065cb93381c17700d3ac51"
 dependencies = [
  "ferrotorch-core",
  "num-traits",
+ "tracing",
+]
+
+[[package]]
+name = "ferrotorch-gpu"
+version = "0.5.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "65a87b1f96cdfb81dbd61a583da17dd94ed0547f5213974ed01933714adc19b9"
+dependencies = [
+ "cudarc",
+ "ferrotorch-core",
+ "half",
+ "num-traits",
+ "thiserror 2.0.18",
  "tracing",
 ]
 
@@ -1548,7 +1572,9 @@ checksum = "0cc23270f6e1808e30a928bdc84dea0b9b4136a8bc82338574f23baf47bbd280"
 name = "gpt"
 version = "0.1.0"
 dependencies = [
+ "cudarc",
  "ferrotorch",
+ "libloading 0.9.0",
 ]
 
 [[package]]
@@ -1898,6 +1924,16 @@ name = "libloading"
 version = "0.8.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d7c4b02199fee7c5d21a5ae7d8cfa79a6ef5bb2fc834d6e9058e89c825efdc55"
+dependencies = [
+ "cfg-if",
+ "windows-link",
+]
+
+[[package]]
+name = "libloading"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "754ca22de805bb5744484a5b151a9e1a8e837d5dc232c2d7d8c2e3492edc8b60"
 dependencies = [
  "cfg-if",
  "windows-link",

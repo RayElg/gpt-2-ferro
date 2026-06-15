@@ -35,6 +35,14 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
     let gpt = gpt.load_from_statedict(&state_dict)?;
     let gpt = gpt.set_tok(tok)?;
 
+    let device = if cuda_available() && ferrotorch::gpu::init_cuda_backend().is_ok() {
+        Device::Cuda(0)
+    } else {
+        Device::Cpu
+    };
+
+    gpt.move_to_device(device)?;
+
     let size_batch = 5;
     let decode_n_toks = 30;
 
@@ -71,6 +79,7 @@ struct GPT<T: Float> {
     transformer: Transformer<T>,
     lm_head: Linear<T>,
     tok: Option<Tokenizer>,
+    cur_device: Option<Device>, // If moved
 }
 
 impl<T: Float> GPT<T> {
@@ -80,6 +89,7 @@ impl<T: Float> GPT<T> {
             transformer: Transformer::new(config),
             lm_head: Linear::new(config.n_embd, config.vocab_size, false).unwrap(),
             tok: None,
+            cur_device: None,
         }
     }
 
@@ -181,7 +191,15 @@ impl<T: Float> GPT<T> {
             .into_iter()
             .map(|id| T::from(id).unwrap())
             .collect();
-        let mut batch: Tensor<T> = from_vec(data, &[size_batch, t])?;
+        let batch: Tensor<T> = from_vec(data, &[size_batch, t])?;
+
+        // Before forward passes, make sure batch is on device
+        // Cheap if it is already, so its okay to do unnecessarily
+        let mut batch = if let Some(dev) = self.cur_device {
+            batch.to(dev)?
+        } else {
+            batch
+        };
 
         while batch.size()[1] < (t + decode_n_toks) {
             let logits = &self.forward(&batch)?;
@@ -223,6 +241,19 @@ impl<T: Float> GPT<T> {
         }
 
         Ok(out)
+    }
+
+    // Probably prone to half-failed state?
+    fn move_to_device(&mut self, device: Device) -> FerrotorchResult<()> {
+        self.lm_head.to_device(device)?;
+        self.transformer.wpe.to_device(device)?;
+        self.transformer.wte.to_device(device)?;
+        self.transformer.ln_f.to_device(device)?;
+        self.transformer.h.to_device(device)?;
+
+        self.cur_device = Some(device);
+
+        Ok(())
     }
 }
 
@@ -571,5 +602,15 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
 
     fn is_training(&self) -> bool {
         todo!()
+    }
+}
+
+fn cuda_available() -> bool {
+    // Unsafe eek
+    // but avoids unwinding a panic
+    unsafe {
+        ["libcuda.so.1", "libcuda.so"]
+            .iter()
+            .any(|n| libloading::Library::new(*n).is_ok())
     }
 }
