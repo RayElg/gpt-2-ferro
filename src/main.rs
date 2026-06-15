@@ -531,7 +531,7 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
         let attn = q.matmul(&kt)?;
         let scale = <T as ferrotorch::Element>::one()
             / T::from((self.n_embd / self.n_head) as f64).unwrap().sqrt();
-        let attn = (&attn * &scalar(scale)?)?;
+        let attn = (&attn * &scalar(scale)?.to(attn.device())?)?;
 
         let mask_slice = self
             .bias
@@ -545,7 +545,8 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
         .contiguous()?;
         let bool_mask = BoolTensor::from_predicate(&mask_expanded, |v| {
             v == <T as ferrotorch::Element>::zero()
-        })?;
+        })?
+        .to(attn.device())?;
         let attn = attn.masked_fill(&bool_mask, T::neg_infinity())?;
 
         let attn = attn.softmax()?;
