@@ -250,7 +250,9 @@ impl<T: Float> GPT<T> {
         self.transformer.wpe.to_device(device)?;
         self.transformer.wte.to_device(device)?;
         self.transformer.ln_f.to_device(device)?;
-        self.transformer.h.to_device(device)?;
+        for i in 0..self.transformer.h.len() {
+            self.transformer.h.get_mut(i).unwrap().to_device(device)?;
+        }
 
         self.cur_device = Some(device);
 
