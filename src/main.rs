@@ -207,7 +207,7 @@ impl<T: Float> GPT<T> {
             let cur_t = batch.size()[1];
             let logits = logits.narrow(1, cur_t - 1, 1)?.contiguous()?.squeeze_t(1)?;
             let probs = logits.softmax()?;
-            let (topk_probs, topk_indices) = topk(&probs, 50, true)?;
+            let (topk_probs, topk_indices) = topk(&probs.cpu()?, 50, true)?;
 
             let b = topk_probs.shape()[0];
             let mut next_ids = Vec::<i64>::with_capacity(b);
