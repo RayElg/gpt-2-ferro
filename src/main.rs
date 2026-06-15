@@ -4,7 +4,7 @@ use ferrotorch::{
     distributions::{Categorical, Distribution},
     from_vec,
     hub::{HubCache, hf_download_model},
-    nn::{Buffer, Embedding, ModuleList, StateDict},
+    nn::{Buffer, Embedding, ModuleList, StateDict, init},
     no_grad,
     prelude::*,
     serialize::load_safetensors,
@@ -29,11 +29,12 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
     let state_dict = load_safetensors::<f32>(&dir.join("model.safetensors"))?;
     let tok = load_tokenizer(&dir.join("tokenizer.json"))?;
 
-    let mut gpt = GPT::new(GPTConfig::GPT2);
+    let mut gpt: GPT<f32> = GPT::new(GPTConfig::GPT2);
 
-    println!("Loading weights into gpt");
-    let gpt = gpt.load_from_statedict(&state_dict)?;
+    // println!("Loading weights into gpt");
+    // let gpt = gpt.load_from_statedict(&state_dict)?;
     let gpt = gpt.set_tok(tok)?;
+    let gpt = gpt.fresh_params()?;
 
     let device = if cuda_available() && ferrotorch::gpu::init_cuda_backend().is_ok() {
         Device::Cuda(0)
@@ -43,8 +44,8 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
 
     gpt.move_to_device(device)?;
 
-    let size_batch = 5;
-    let decode_n_toks = 30;
+    let size_batch = 1;
+    let decode_n_toks = 5;
 
     let out = no_grad(|| gpt.pipeline(in_str, size_batch, decode_n_toks))?;
 
@@ -137,6 +138,19 @@ impl<T: Float> GPT<T> {
         load_submodule_fields(&mut self.transformer.ln_f, &state_dict, "ln_f")?;
 
         self.lm_head.weight = self.transformer.wte.weight.clone();
+
+        Ok(self)
+    }
+
+    fn fresh_params(&mut self) -> FerrotorchResult<&mut Self> {
+        // Use normal distributiopn, sample with mean 0, std 0.02
+        init::normal(&mut self.transformer.wte.weight, 0.0, 0.02)?;
+        init::normal(&mut self.transformer.wpe.weight, 0.0, 0.02)?;
+
+        let blocks = (0..self.config.n_layer)
+            .map(|_| Box::new(Block::new(self.config)) as Box<dyn Module<T>>)
+            .collect::<Vec<_>>();
+        self.transformer.h = ModuleList::new(blocks);
 
         Ok(self)
     }
@@ -306,12 +320,20 @@ struct Block<T: Float> {
 
 impl<T: Float> Block<T> {
     fn new(config: GPTConfig) -> Self {
-        Self {
+        let mut block = Self {
             ln_1: LayerNorm::new(vec![config.n_embd], 1e-5, true).unwrap(), // TODO check learnable?
             attn: CausalSelfAttention::new(config),
             ln_2: LayerNorm::new(vec![config.n_embd], 1e-5, true).unwrap(), // TODO check learnable?
             mlp: MLP::new(config),
-        }
+        };
+
+        let proj_std = 0.02 * (2.0 * config.n_layer as f64).powf(-0.5);
+        init::normal(&mut block.attn.c_attn.weight, 0.0, 0.02).unwrap();
+        init::normal(&mut block.attn.c_proj.weight, 0.0, proj_std).unwrap();
+        init::normal(&mut block.mlp.c_fc.weight, 0.0, 0.02).unwrap();
+        init::normal(&mut block.mlp.c_proj.weight, 0.0, proj_std).unwrap();
+
+        block
     }
 }
 
