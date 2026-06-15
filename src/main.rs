@@ -541,8 +541,15 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
         let mask_slice = self
             .bias
             .narrow(2, 0, *t as usize)?
-            .narrow(3, 0, *t as usize)?;
-        let attn = attn.add_t(&mask_slice)?;
+            .narrow(3, 0, *t as usize)?
+            .contiguous()?;
+
+        let mask_full = expand(
+            &mask_slice,
+            &[*b as usize, self.n_head as usize, *t as usize, *t as usize],
+        )?
+        .contiguous()?;
+        let attn = attn.add_t(&mask_full)?;
 
         let attn = attn.softmax()?;
 
