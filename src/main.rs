@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ferrotorch::{
     distributions::{Categorical, Distribution},
-    expand, from_vec,
+    from_vec,
     hub::{HubCache, hf_download_model},
     nn::{Buffer, Embedding, ModuleList, StateDict},
     no_grad,
@@ -467,11 +467,14 @@ struct CausalSelfAttention<T: Float> {
 
 impl<T: Float> CausalSelfAttention<T> {
     fn new(config: GPTConfig) -> Self {
-        let ones_matrix = ones::<T>(&[config.block_size, config.block_size]).unwrap();
-        let lower_tri = ferrotorch::tril(&ones_matrix, 0).unwrap();
-        let mask = lower_tri
-            .view(&[1, 1, config.block_size as i64, config.block_size as i64])
-            .unwrap();
+        let bs = config.block_size;
+        let mut mask_data = vec![<T as ferrotorch::Element>::zero(); bs * bs];
+        for i in 0..bs {
+            for j in (i + 1)..bs {
+                mask_data[i * bs + j] = T::neg_infinity();
+            }
+        }
+        let mask = from_vec(mask_data, &[1, 1, bs, bs]).unwrap();
 
         Self {
             c_attn: Linear::new(config.n_embd, config.n_embd * 3, true).unwrap(),
@@ -536,18 +539,8 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
         let mask_slice = self
             .bias
             .narrow(2, 0, *t as usize)?
-            .narrow(3, 0, *t as usize)?
-            .contiguous()?;
-        let mask_expanded = expand(
-            &mask_slice,
-            &[*b as usize, self.n_head as usize, *t as usize, *t as usize],
-        )?
-        .contiguous()?;
-        let bool_mask = BoolTensor::from_predicate(&mask_expanded, |v| {
-            v == <T as ferrotorch::Element>::zero()
-        })?
-        .to(attn.device())?;
-        let attn = attn.masked_fill(&bool_mask, T::neg_infinity())?;
+            .narrow(3, 0, *t as usize)?;
+        let attn = attn.add_t(&mask_slice)?;
 
         let attn = attn.softmax()?;
 
