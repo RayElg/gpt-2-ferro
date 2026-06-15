@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ferrotorch::{
     distributions::{Categorical, Distribution},
-    expand, from_vec,
+    from_vec,
     hub::{HubCache, hf_download_model},
     nn::{Buffer, Embedding, ModuleList, StateDict},
     no_grad,
@@ -34,6 +34,14 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
     println!("Loading weights into gpt");
     let gpt = gpt.load_from_statedict(&state_dict)?;
     let gpt = gpt.set_tok(tok)?;
+
+    let device = if cuda_available() && ferrotorch::gpu::init_cuda_backend().is_ok() {
+        Device::Cuda(0)
+    } else {
+        Device::Cpu
+    };
+
+    gpt.move_to_device(device)?;
 
     let size_batch = 5;
     let decode_n_toks = 30;
@@ -71,6 +79,7 @@ struct GPT<T: Float> {
     transformer: Transformer<T>,
     lm_head: Linear<T>,
     tok: Option<Tokenizer>,
+    cur_device: Option<Device>, // If moved
 }
 
 impl<T: Float> GPT<T> {
@@ -80,6 +89,7 @@ impl<T: Float> GPT<T> {
             transformer: Transformer::new(config),
             lm_head: Linear::new(config.n_embd, config.vocab_size, false).unwrap(),
             tok: None,
+            cur_device: None,
         }
     }
 
@@ -152,7 +162,8 @@ impl<T: Float> GPT<T> {
             <T as ferrotorch::Element>::zero(),
             T::from(t).unwrap(),
             <T as ferrotorch::Element>::one(),
-        )?;
+        )?
+        .to(idx.device())?;
         let pos_emb = self.transformer.wpe.forward(&pos)?;
 
         let mut x = tok_emb.add_t(&pos_emb)?;
@@ -181,14 +192,22 @@ impl<T: Float> GPT<T> {
             .into_iter()
             .map(|id| T::from(id).unwrap())
             .collect();
-        let mut batch: Tensor<T> = from_vec(data, &[size_batch, t])?;
+        let batch: Tensor<T> = from_vec(data, &[size_batch, t])?;
+
+        // Before forward passes, make sure batch is on device
+        // Cheap if it is already, so its okay to do unnecessarily
+        let mut batch = if let Some(dev) = self.cur_device {
+            batch.to(dev)?
+        } else {
+            batch
+        };
 
         while batch.size()[1] < (t + decode_n_toks) {
             let logits = &self.forward(&batch)?;
             let cur_t = batch.size()[1];
             let logits = logits.narrow(1, cur_t - 1, 1)?.contiguous()?.squeeze_t(1)?;
             let probs = logits.softmax()?;
-            let (topk_probs, topk_indices) = topk(&probs, 50, true)?;
+            let (topk_probs, topk_indices) = topk(&probs.cpu()?, 50, true)?;
 
             let b = topk_probs.shape()[0];
             let mut next_ids = Vec::<i64>::with_capacity(b);
@@ -204,7 +223,7 @@ impl<T: Float> GPT<T> {
             }
 
             let new_col_data: Vec<T> = next_ids.iter().map(|&id| T::from(id).unwrap()).collect();
-            let new_col = from_vec(new_col_data, &[b, 1])?;
+            let new_col = from_vec(new_col_data, &[b, 1])?.to(batch.device())?;
 
             batch = cat(&[batch, new_col], 1)?;
         }
@@ -223,6 +242,21 @@ impl<T: Float> GPT<T> {
         }
 
         Ok(out)
+    }
+
+    // Probably prone to half-failed state?
+    fn move_to_device(&mut self, device: Device) -> FerrotorchResult<()> {
+        self.lm_head.to_device(device)?;
+        self.transformer.wpe.to_device(device)?;
+        self.transformer.wte.to_device(device)?;
+        self.transformer.ln_f.to_device(device)?;
+        for i in 0..self.transformer.h.len() {
+            self.transformer.h.get_mut(i).unwrap().to_device(device)?;
+        }
+
+        self.cur_device = Some(device);
+
+        Ok(())
     }
 }
 
@@ -345,7 +379,12 @@ impl<T: Float> Module<T> for Block<T> {
     }
 
     fn buffers_mut(&mut self) -> Vec<&mut Buffer<T>> {
-        vec![]
+        let mut out = Vec::new();
+        out.extend(self.ln_1.buffers_mut());
+        out.extend(self.attn.buffers_mut());
+        out.extend(self.ln_2.buffers_mut());
+        out.extend(self.mlp.buffers_mut());
+        out
     }
 }
 
@@ -430,11 +469,14 @@ struct CausalSelfAttention<T: Float> {
 
 impl<T: Float> CausalSelfAttention<T> {
     fn new(config: GPTConfig) -> Self {
-        let ones_matrix = ones::<T>(&[config.block_size, config.block_size]).unwrap();
-        let lower_tri = ferrotorch::tril(&ones_matrix, 0).unwrap();
-        let mask = lower_tri
-            .view(&[1, 1, config.block_size as i64, config.block_size as i64])
-            .unwrap();
+        let bs = config.block_size;
+        let mut mask_data = vec![<T as ferrotorch::Element>::zero(); bs * bs];
+        for i in 0..bs {
+            for j in (i + 1)..bs {
+                mask_data[i * bs + j] = T::neg_infinity();
+            }
+        }
+        let mask = from_vec(mask_data, &[1, 1, bs, bs]).unwrap();
 
         Self {
             c_attn: Linear::new(config.n_embd, config.n_embd * 3, true).unwrap(),
@@ -494,22 +536,20 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
         let attn = q.matmul(&kt)?;
         let scale = <T as ferrotorch::Element>::one()
             / T::from((self.n_embd / self.n_head) as f64).unwrap().sqrt();
-        let attn = (&attn * &scalar(scale)?)?;
+        let attn = (&attn * &scalar(scale)?.to(attn.device())?)?;
 
         let mask_slice = self
             .bias
             .narrow(2, 0, *t as usize)?
             .narrow(3, 0, *t as usize)?
             .contiguous()?;
-        let mask_expanded = expand(
+
+        let mask_full = expand(
             &mask_slice,
             &[*b as usize, self.n_head as usize, *t as usize, *t as usize],
         )?
         .contiguous()?;
-        let bool_mask = BoolTensor::from_predicate(&mask_expanded, |v| {
-            v == <T as ferrotorch::Element>::zero()
-        })?;
-        let attn = attn.masked_fill(&bool_mask, T::neg_infinity())?;
+        let attn = attn.add_t(&mask_full)?;
 
         let attn = attn.softmax()?;
 
@@ -571,5 +611,15 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
 
     fn is_training(&self) -> bool {
         todo!()
+    }
+}
+
+fn cuda_available() -> bool {
+    // Unsafe eek
+    // but avoids unwinding a panic
+    unsafe {
+        ["libcuda.so.1", "libcuda.so"]
+            .iter()
+            .any(|n| libloading::Library::new(*n).is_ok())
     }
 }

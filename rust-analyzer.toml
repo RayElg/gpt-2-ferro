@@ -18,4 +18,4 @@ autoimport.enable = false
 autoself.enable = false
 
 [server]
-extraEnv = { RA_MEMORY_LIMIT = "1000" }
+extraEnv = { RA_MEMORY_LIMIT = "500" }
