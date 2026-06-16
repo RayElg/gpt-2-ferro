@@ -11,6 +11,8 @@ use ferrotorch::{
     tokenize::{Tokenizer, decode, encode, load_tokenizer},
 };
 
+use std::fs;
+
 fn main() -> FerrotorchResult<()> {
     let in_str = std::env::args()
         .nth(1)
@@ -33,8 +35,6 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
 
     // println!("Loading weights into gpt");
     // let gpt = gpt.load_from_statedict(&state_dict)?;
-    let gpt = gpt.set_tok(tok)?;
-    let gpt = gpt.fresh_params()?;
 
     let device = if cuda_available() && ferrotorch::gpu::init_cuda_backend().is_ok() {
         Device::Cuda(0)
@@ -42,18 +42,55 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
         Device::Cpu
     };
 
+    let b = 4;
+    let t = 32;
+
+    // TODO should probably pre-tokenize
+    let (x, y) = get_batch::<f32>(b, t, &tok, device)?;
+
+    let gpt = gpt.set_tok(tok)?;
+    let gpt = gpt.fresh_params()?;
+
+
     gpt.move_to_device(device)?;
 
-    let size_batch = 1;
-    let decode_n_toks = 5;
+    // let size_batch = 1;
+    // let decode_n_toks = 5;
 
-    let out = no_grad(|| gpt.pipeline(in_str, size_batch, decode_n_toks))?;
+    // let out = no_grad(|| gpt.pipeline(in_str, size_batch, decode_n_toks))?;
 
-    for s in out {
-        println!("> {}", s);
-    }
+    // for s in out {
+    //     println!("> {}", s);
+    // }
+    let (logits, loss) = no_grad(|| gpt.forward_with_loss(&x, &y))?;
+
+    println!("loss: {:?}", loss.data_vec()?);
+    // println!("logits: {:?}", logits.data_vec()?);
 
     Ok(())
+}
+
+fn get_batch<T: Float>(b: usize, t: usize, tok: &Tokenizer, device: Device) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
+    let text = fs::read_to_string("./data/input.txt").unwrap();
+    let ids: Vec<u32> = encode(&tok, text.as_str(), false)?;
+    let mut x = Vec::with_capacity(b * t);
+    let mut y = Vec::with_capacity(b * t);
+    let mut i = 0;
+    for _ in 0..b {
+        for k in 0..t {
+            x.push(T::from(ids[i + k]).unwrap());
+            y.push(T::from(ids[i + k + 1]).unwrap());
+        }
+        i += t;
+        if i + t + 1 >= ids.len() { // TODO check for off-by-one
+            break;
+        }
+    }
+
+    let x = from_vec(x, &[b, t])?;
+    let y = from_vec(y, &[b, t])?;
+
+    Ok((x.to(device)?, y.to(device)?))
 }
 
 #[derive(Copy, Clone)]
@@ -152,6 +189,11 @@ impl<T: Float> GPT<T> {
             .collect::<Vec<_>>();
         self.transformer.h = ModuleList::new(blocks);
 
+        // TODO we will want to keep this tethered?
+        // Probably needs retethering after move
+        // And special treatment during train?
+        self.lm_head.weight = self.transformer.wte.weight.clone();
+
         Ok(self)
     }
 
@@ -190,6 +232,17 @@ impl<T: Float> GPT<T> {
         x = self.transformer.ln_f.forward(&x)?;
         let logits = self.lm_head.forward(&x)?;
         Ok(logits)
+    }
+
+    fn forward_with_loss(&self, idx: &Tensor<T>, targets: &Tensor<T>) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
+        let mut logits = self.forward(idx)?;
+        let [b, t, v] = logits.shape() else { panic!() };
+        let (b, t, v) = (*b, *t, *v);
+
+        let logits_2d  = logits.reshape_t(&[(b * t) as isize, v as isize])?;
+        let targets_1d = targets.reshape_t(&[(b * t) as isize])?;
+        let loss = CrossEntropyLoss::default().forward(&logits_2d, &targets_1d)?;
+        Ok((logits, loss))
     }
 
     fn pipeline(
