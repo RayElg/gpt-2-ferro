@@ -4,8 +4,8 @@ use ferrotorch::{
     distributions::{Categorical, Distribution},
     from_vec,
     hub::{HubCache, hf_download_model},
-    nn::{Buffer, Embedding, ModuleList, StateDict, init},
-    no_grad,
+    nn::{Buffer, Embedding, ModuleList, StateDict, clip_grad_norm_, init},
+    optim::AdamWConfig,
     prelude::*,
     serialize::load_safetensors,
     tokenize::{Tokenizer, decode, encode, load_tokenizer},
@@ -23,12 +23,12 @@ fn main() -> FerrotorchResult<()> {
     Ok(())
 }
 
-fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
+fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     let cache = HubCache::with_default_dir();
     let dir = hf_download_model("openai-community/gpt2", "main", &cache)?;
 
     println!("Getting weights");
-    let state_dict = load_safetensors::<f32>(&dir.join("model.safetensors"))?;
+    let _state_dict = load_safetensors::<f32>(&dir.join("model.safetensors"))?;
     let tok = load_tokenizer(&dir.join("tokenizer.json"))?;
 
     let mut gpt: GPT<f32> = GPT::new(GPTConfig::GPT2);
@@ -51,7 +51,6 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
     let gpt = gpt.set_tok(tok)?;
     let gpt = gpt.fresh_params()?;
 
-
     gpt.move_to_device(device)?;
 
     // let size_batch = 1;
@@ -62,15 +61,35 @@ fn do_gpt2(in_str: &str) -> FerrotorchResult<()> {
     // for s in out {
     //     println!("> {}", s);
     // }
-    let (logits, loss) = no_grad(|| gpt.forward_with_loss(&x, &y))?;
-
-    println!("loss: {:?}", loss.data_vec()?);
     // println!("logits: {:?}", logits.data_vec()?);
+
+    let mut optimizer = AdamW::new(
+        gpt.parameters().into_iter().cloned().collect(),
+        AdamWConfig::default().with_lr(3e-4).with_betas((0.9, 0.95)),
+    );
+
+    // Do the overfit
+    for i in 0..50 {
+        optimizer.zero_grad();
+
+        let (_logits, loss) = gpt.forward_with_loss(&x, &y)?;
+
+        println!("step: {i}, loss: {:?}", loss.data_vec()?);
+
+        backward(&loss)?;
+        let _total_norm = clip_grad_norm_(&gpt.parameters(), 1.0, 2.0)?;
+        optimizer.step();
+    }
 
     Ok(())
 }
 
-fn get_batch<T: Float>(b: usize, t: usize, tok: &Tokenizer, device: Device) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
+fn get_batch<T: Float>(
+    b: usize,
+    t: usize,
+    tok: &Tokenizer,
+    device: Device,
+) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
     let text = fs::read_to_string("./data/input.txt").unwrap();
     let ids: Vec<u32> = encode(&tok, text.as_str(), false)?;
     let mut x = Vec::with_capacity(b * t);
@@ -82,7 +101,8 @@ fn get_batch<T: Float>(b: usize, t: usize, tok: &Tokenizer, device: Device) -> F
             y.push(T::from(ids[i + k + 1]).unwrap());
         }
         i += t;
-        if i + t + 1 >= ids.len() { // TODO check for off-by-one
+        if i + t + 1 >= ids.len() {
+            // TODO check for off-by-one
             break;
         }
     }
@@ -112,12 +132,16 @@ impl GPTConfig {
     };
 }
 
+#[derive(Module)]
 struct GPT<T: Float> {
     config: GPTConfig,
+    #[submodule]
     transformer: Transformer<T>,
+    #[submodule]
     lm_head: Linear<T>,
     tok: Option<Tokenizer>,
     cur_device: Option<Device>, // If moved
+    training: bool,
 }
 
 impl<T: Float> GPT<T> {
@@ -128,6 +152,7 @@ impl<T: Float> GPT<T> {
             lm_head: Linear::new(config.n_embd, config.vocab_size, false).unwrap(),
             tok: None,
             cur_device: None,
+            training: false,
         }
     }
 
@@ -234,12 +259,16 @@ impl<T: Float> GPT<T> {
         Ok(logits)
     }
 
-    fn forward_with_loss(&self, idx: &Tensor<T>, targets: &Tensor<T>) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
-        let mut logits = self.forward(idx)?;
+    fn forward_with_loss(
+        &self,
+        idx: &Tensor<T>,
+        targets: &Tensor<T>,
+    ) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
+        let logits = self.forward(idx)?;
         let [b, t, v] = logits.shape() else { panic!() };
         let (b, t, v) = (*b, *t, *v);
 
-        let logits_2d  = logits.reshape_t(&[(b * t) as isize, v as isize])?;
+        let logits_2d = logits.reshape_t(&[(b * t) as isize, v as isize])?;
         let targets_1d = targets.reshape_t(&[(b * t) as isize])?;
         let loss = CrossEntropyLoss::default().forward(&logits_2d, &targets_1d)?;
         Ok((logits, loss))
@@ -342,11 +371,17 @@ fn load_submodule_fields<T: Float, M: Module<T>>(
     module.load_state_dict(&stripped_map, false)
 }
 
+#[derive(Module)]
 struct Transformer<T: Float> {
+    #[submodule]
     wte: Embedding<T>,
+    #[submodule]
     wpe: Embedding<T>,
+    #[submodule]
     h: ModuleList<T>,
+    #[submodule]
     ln_f: LayerNorm<T>,
+    training: bool,
 }
 
 impl<T: Float> Transformer<T> {
@@ -360,6 +395,7 @@ impl<T: Float> Transformer<T> {
             wpe: Embedding::new(config.block_size, config.n_embd, None).unwrap(),
             h: ModuleList::new(blocks),
             ln_f: LayerNorm::new(vec![config.n_embd], 1e-5, true).unwrap(),
+            training: false,
         }
     }
 }
@@ -408,7 +444,12 @@ impl<T: Float> Module<T> for Block<T> {
     }
 
     fn parameters(&self) -> Vec<&Parameter<T>> {
-        todo!()
+        let mut out = Vec::new();
+        out.extend(self.ln_1.parameters());
+        out.extend(self.attn.parameters());
+        out.extend(self.ln_2.parameters());
+        out.extend(self.mlp.parameters());
+        out
     }
 
     fn parameters_mut(&mut self) -> Vec<&mut Parameter<T>> {
@@ -489,7 +530,10 @@ impl<T: Float> Module<T> for MLP<T> {
     }
 
     fn parameters(&self) -> Vec<&Parameter<T>> {
-        todo!()
+        let mut out = Vec::new();
+        out.extend(self.c_fc.parameters());
+        out.extend(self.c_proj.parameters());
+        out
     }
 
     fn parameters_mut(&mut self) -> Vec<&mut Parameter<T>> {
@@ -641,7 +685,10 @@ impl<T: Float> Module<T> for CausalSelfAttention<T> {
     }
 
     fn parameters(&self) -> Vec<&Parameter<T>> {
-        todo!()
+        let mut out = Vec::new();
+        out.extend(self.c_attn.parameters());
+        out.extend(self.c_proj.parameters());
+        out
     }
 
     fn parameters_mut(&mut self) -> Vec<&mut Parameter<T>> {

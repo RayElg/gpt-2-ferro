@@ -1574,6 +1574,8 @@ version = "0.1.0"
 dependencies = [
  "cudarc",
  "ferrotorch",
+ "ferrotorch-core",
+ "ferrotorch-nn",
  "libloading 0.9.0",
 ]
 
