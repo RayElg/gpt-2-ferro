@@ -5,6 +5,7 @@ use ferrotorch::{
     from_vec,
     hub::{HubCache, hf_download_model},
     nn::{Buffer, Embedding, ModuleList, StateDict, clip_grad_norm_, init},
+    nn::functional::one_hot,
     optim::AdamWConfig,
     prelude::*,
     serialize::load_safetensors,
@@ -72,7 +73,8 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     for i in 0..50 {
         optimizer.zero_grad();
 
-        let (_logits, loss) = gpt.forward_with_loss(&x, &y)?;
+        let logits = gpt.forward(&x)?;
+        let loss = cross_entropy_w_gpu(&logits, &y)?;
 
         println!("step: {i}, loss: {:?}", loss.data_vec()?);
 
@@ -82,6 +84,28 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     }
 
     Ok(())
+}
+
+// Looks like cross entropy doesn't have GPU support yet in ferrotorch
+// TODO - contrast w/ ferrotorch
+fn cross_entropy_w_gpu<T: Float>(logits: &Tensor<T>, targets: &Tensor<T>) -> FerrotorchResult<Tensor<T>> {
+    let logits_shape = logits.shape();
+    let v = *logits_shape.last().expect("Need expected logits shape");
+
+    let n: usize = logits_shape[..logits_shape.len() - 1].iter().product();
+
+    let device = logits.device();
+
+    let logits_2d = logits.reshape_t(&[n as isize, v as isize])?;
+    let targets_1d = targets.reshape_t(&[n as isize])?;
+
+    let onehot = one_hot(&targets_1d, v)?.to(device)?;
+
+    let logp = logits_2d.log_softmax()?;
+    let nll_sum = logp.mul_t(&onehot)?.sum_all()?;
+    let scale = scalar(T::from(-1.0 / n as f64).unwrap())?.to(device)?;
+
+    nll_sum.mul_t(&scale)
 }
 
 fn get_batch<T: Float>(
