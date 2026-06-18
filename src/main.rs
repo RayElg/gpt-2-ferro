@@ -4,8 +4,8 @@ use ferrotorch::{
     distributions::{Categorical, Distribution},
     from_vec,
     hub::{HubCache, hf_download_model},
-    nn::{Buffer, Embedding, ModuleList, StateDict, clip_grad_norm_, init},
     nn::functional::one_hot,
+    nn::{Buffer, Embedding, ModuleList, StateDict, clip_grad_norm_, init},
     optim::AdamWConfig,
     prelude::*,
     serialize::load_safetensors,
@@ -86,9 +86,74 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     Ok(())
 }
 
+struct DataLoader {
+    b: usize,
+    t: usize,
+    ids: Vec<u32>,
+    cur_pos: usize,
+    device: Device,
+}
+
+impl DataLoader {
+    fn new(
+        b: usize,
+        t: usize,
+        infile: &str,
+        tok: &Tokenizer,
+        device: Device,
+    ) -> FerrotorchResult<Self> {
+        let text = fs::read_to_string(infile).map_err(|e| FerrotorchError::Internal {
+            message: format!("reading {infile:?}: {e}"),
+        })?;
+        let ids: Vec<u32> = encode(&tok, text.as_str(), false)?;
+
+        // If there's fewer than 1 batch here
+        if ids.len() < b * t + 1 {
+            return Err(FerrotorchError::InvalidArgument {
+                message: "Not enough data for a batch of size b * t".to_string(),
+            });
+        }
+
+        Ok(Self {
+            b,
+            t,
+            ids,
+            cur_pos: 0,
+            device,
+        })
+    }
+
+    fn next_batch<T: Float>(&mut self) -> FerrotorchResult<(Tensor<T>, Tensor<T>)> {
+        let id_slice = &self.ids[self.cur_pos..self.cur_pos + (self.b * self.t + 1)];
+
+        let x: Vec<T> = id_slice[..self.b * self.t]
+            .iter()
+            .map(|&id| T::from(id).unwrap())
+            .collect();
+        let y: Vec<T> = id_slice[1..]
+            .iter()
+            .map(|&id| T::from(id).unwrap())
+            .collect();
+
+        // Shape that into b, t and targets
+        let x = from_vec(x, &[self.b, self.t])?;
+        let y = from_vec(y, &[self.b, self.t])?;
+
+        self.cur_pos += self.b * self.t;
+        // If we might go out of bounds here
+        if self.cur_pos + (self.b * self.t + 1) > self.ids.len() {
+            self.cur_pos = 0;
+        }
+        Ok((x.to(self.device)?, y.to(self.device)?))
+    }
+}
+
 // Looks like cross entropy doesn't have GPU support yet in ferrotorch
 // TODO - contrast w/ ferrotorch
-fn cross_entropy_w_gpu<T: Float>(logits: &Tensor<T>, targets: &Tensor<T>) -> FerrotorchResult<Tensor<T>> {
+fn cross_entropy_w_gpu<T: Float>(
+    logits: &Tensor<T>,
+    targets: &Tensor<T>,
+) -> FerrotorchResult<Tensor<T>> {
     let logits_shape = logits.shape();
     let v = *logits_shape.last().expect("Need expected logits shape");
 
