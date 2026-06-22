@@ -1,11 +1,11 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ferrotorch::{
     distributions::{Categorical, Distribution},
     from_vec,
     hub::{HubCache, hf_download_model},
     nn::functional::one_hot,
-    nn::{Buffer, Embedding, ModuleList, StateDict, clip_grad_norm_, init},
+    nn::{Buffer, Embedding, ModuleList, Parameter, StateDict, clip_grad_norm_, init},
     optim::AdamWConfig,
     prelude::*,
     serialize::load_safetensors,
@@ -67,7 +67,7 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     // println!("logits: {:?}", logits.data_vec()?);
 
     let mut optimizer = AdamW::new(
-        gpt.parameters().into_iter().cloned().collect(),
+        gpt.deduped_params(),
         AdamWConfig::default().with_lr(3e-4).with_betas((0.9, 0.95)),
     );
 
@@ -306,9 +306,6 @@ impl<T: Float> GPT<T> {
             .collect::<Vec<_>>();
         self.transformer.h = ModuleList::new(blocks);
 
-        // TODO we will want to keep this tethered?
-        // Probably needs retethering after move
-        // And special treatment during train?
         self.lm_head.weight = self.transformer.wte.weight.clone();
 
         Ok(self)
@@ -442,9 +439,21 @@ impl<T: Float> GPT<T> {
             self.transformer.h.get_mut(i).unwrap().to_device(device)?;
         }
 
+        // Re-tie weights
+        self.lm_head.weight = self.transformer.wte.weight.clone();
+
         self.cur_device = Some(device);
 
         Ok(())
+    }
+
+    fn deduped_params(&self) -> Vec<Parameter<T>> {
+        let mut seen = HashSet::new();
+        self.parameters()
+            .into_iter()
+            .filter(|p| seen.insert(p.tensor().id()))
+            .cloned()
+            .collect()
     }
 }
 
@@ -513,6 +522,11 @@ impl<T: Float> Block<T> {
         init::normal(&mut block.attn.c_proj.weight, 0.0, proj_std).unwrap();
         init::normal(&mut block.mlp.c_fc.weight, 0.0, 0.02).unwrap();
         init::normal(&mut block.mlp.c_proj.weight, 0.0, proj_std).unwrap();
+
+        init::zeros(block.attn.c_attn.bias.as_mut().unwrap());
+        init::zeros(block.attn.c_proj.bias.as_mut().unwrap());
+        init::zeros(block.mlp.c_fc.bias.as_mut().unwrap());
+        init::zeros(block.mlp.c_proj.bias.as_mut().unwrap());
 
         block
     }
