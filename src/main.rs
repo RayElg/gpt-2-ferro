@@ -47,7 +47,9 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     let t = 32;
 
     // TODO should probably pre-tokenize
-    let (x, y) = get_batch::<f32>(b, t, &tok, device)?;
+    // let (x, y) = get_batch::<f32>(b, t, &tok, device)?;
+
+    let mut data_loader = DataLoader::new(b, t, "./data/input.txt", &tok, device)?;
 
     let gpt = gpt.set_tok(tok)?;
     let gpt = gpt.fresh_params()?;
@@ -71,6 +73,7 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
 
     // Do the overfit
     for i in 0..50 {
+        let (x, y) = data_loader.next_batch::<f32>()?;
         optimizer.zero_grad();
 
         let logits = gpt.forward(&x)?;
