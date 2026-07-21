@@ -9,3 +9,10 @@ ferrotorch-nn = "0.6.2"
 ferrotorch = { version = "0.6.2", features = ["tokenize", "gpu"] }
 cudarc = { version = "0.19", features = ["cuda-12060"] }
 libloading = "0.9"
+
+[patch.crates-io]
+ferrotorch       = { path = "../ferrotorch/ferrotorch" }
+ferrotorch-core  = { path = "../ferrotorch/ferrotorch-core" }
+ferrotorch-gpu   = { path = "../ferrotorch/ferrotorch-gpu" }
+ferrotorch-nn    = { path = "../ferrotorch/ferrotorch-nn" }
+ferrotorch-optim = { path = "../ferrotorch/ferrotorch-optim" }

@@ -5,6 +5,7 @@ use std::time::Instant;
 use ferrotorch::{
     distributions::{Categorical, Distribution},
     from_vec,
+    gpu::{MatmulPrecision, with_matmul_precision},
     hub::{HubCache, hf_download_model},
     nn::functional::one_hot,
     nn::{Buffer, Embedding, ModuleList, Parameter, StateDict, clip_grad_norm_, init},
@@ -70,35 +71,43 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
 
     let mut optimizer = AdamW::new(
         gpt.deduped_params(),
-        AdamWConfig::default().with_lr(3e-4).with_betas((0.9, 0.95)).with_foreach(true),
+        AdamWConfig::default()
+            .with_lr(3e-4)
+            .with_betas((0.9, 0.95))
+            .with_foreach(true),
     );
 
     // Do the overfit
-    for i in 0..50 {
-        let start = Instant::now();
+    with_matmul_precision(MatmulPrecision::High, || -> FerrotorchResult<()> {
+        for i in 0..50 {
+            let start = Instant::now();
 
-        let (x, y) = data_loader.next_batch::<f32>()?;
-        optimizer.zero_grad();
+            let (x, y) = data_loader.next_batch::<f32>()?;
+            optimizer.zero_grad();
 
-        let logits = gpt.forward(&x)?;
-        let loss = cross_entropy_w_gpu(&logits, &y)?;
+            let logits = gpt.forward(&x)?;
+            let loss = cross_entropy_w_gpu(&logits, &y)?;
 
+            backward(&loss)?;
+            let _total_norm = clip_grad_norm_(&gpt.parameters(), 1.0, 2.0)?;
+            optimizer.step();
 
+            if let Some(bck) = ferrotorch_core::gpu_dispatch::gpu_backend() {
+                bck.synchronize(0)?; // Sync for timing
+            }
 
-        backward(&loss)?;
-        let _total_norm = clip_grad_norm_(&gpt.parameters(), 1.0, 2.0)?;
-        optimizer.step();
+            let duration = start.elapsed();
+            let tok_s = (b * t) as f64 / duration.as_secs_f64();
 
-        if let Some(bck) = ferrotorch_core::gpu_dispatch::gpu_backend() {
-            bck.synchronize(0)?; // Sync for timing
+            println!(
+                "step: {i}, loss: {:?}, duration: {:?}, tok_s: {:?}",
+                loss.data_vec()?,
+                duration,
+                tok_s
+            );
         }
-
-        let duration = start.elapsed();
-        let tok_s = (b * t) as f64 / duration.as_secs_f64();
-
-
-        println!("step: {i}, loss: {:?}, duration: {:?}, tok_s: {:?}", loss.data_vec()?, duration, tok_s);
-    }
+        Ok(())
+    })?;
 
     Ok(())
 }

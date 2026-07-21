@@ -1052,8 +1052,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "87cf8c51936a5d268d1544087605f6024dd2848980de8a17ec09ae8e45ef86ef"
 dependencies = [
  "ferrotorch-core",
  "ferrotorch-data",
@@ -1075,8 +1073,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-core"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b22a5ce8367e59a7554fa2d9359f3a73772709b850f6b6cc917ab333f3122da6"
 dependencies = [
  "faer",
  "ferray-core",
@@ -1099,8 +1095,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-data"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d6a29a6eff1a18547ca31634a062c20ce455a2a1e7c51c3ff7b19b20111621c8"
 dependencies = [
  "crossbeam-channel",
  "ferrotorch-core",
@@ -1112,8 +1106,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-distributions"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20e719731ce343901e49253ec029743caa83e2050248646e52e22d0f3c665165"
 dependencies = [
  "ferrotorch-core",
  "num-traits",
@@ -1123,8 +1115,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-gpu"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48fbb2b7240fdb11ded7ed2b640f26838148d6eaf02a2405dcd6980172f1f500"
 dependencies = [
  "cudarc",
  "ferrotorch-core",
@@ -1137,8 +1127,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-hub"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0d68ffaaf1340b16b967d070b20a8e5b0d757a3f816f875b2ed9b23f0cf9d2ae"
 dependencies = [
  "ferrotorch-core",
  "ferrotorch-nn",
@@ -1152,8 +1140,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-jit"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2856156b499afa36a7628f7160fa8ef55a8a324e844c7e187e36e36715dfe3ce"
 dependencies = [
  "cranelift-codegen",
  "cranelift-frontend",
@@ -1170,8 +1156,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-jit-script"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1497e2ab3a6193bf5988114e489a258283ad78ee4277cb9b7c465b69d9e4150a"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1181,8 +1165,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-nn"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adddbe14f2d90fdec7ef1fdb233045d754c9d709ec7c88a8694a4accb543d091"
 dependencies = [
  "ferrotorch-core",
  "ferrotorch-nn-derive",
@@ -1193,8 +1175,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-nn-derive"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29eddafa0a0a957b985c8cb3f88c18d6d0c10119d73e3d5dc92498045adea392"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1204,8 +1184,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-optim"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "131310845ff6e04d7caab835d92ffcfe0a0c38ddbf83d0f4e9916ba2186a393f"
 dependencies = [
  "ferrotorch-core",
  "ferrotorch-nn",
@@ -1216,8 +1194,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-profiler"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13dc7848ac4a0361f8d48c3fb4bc64e7686e521df911ca35d8835379f55b64c0"
 dependencies = [
  "ferrotorch-core",
  "num-traits",
@@ -1226,8 +1202,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-serialize"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fdd9e38cd9d37912c97dcfa09d4b299577bbe45f0187b38d19fcef965d69b1a"
 dependencies = [
  "bytemuck",
  "ferrotorch-core",
@@ -1247,8 +1221,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-tokenize"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5ebda6b8902c0b8fc15abc4a705c5626bd015b141ca67213bbfa2f9a2290513c"
 dependencies = [
  "chrono",
  "ferrotorch-core",
@@ -1261,8 +1233,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-train"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be1ca0d1d827fb95dad6e1177a9df6e5fa786519f361790919a2d09235c5baa8"
 dependencies = [
  "ferrotorch-core",
  "ferrotorch-data",
@@ -1276,8 +1246,6 @@ dependencies = [
 [[package]]
 name = "ferrotorch-vision"
 version = "0.6.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "649ba61aa4673599f1ae922c3f1b1893abe03a994e8384b16da640a743bc589c"
 dependencies = [
  "ferrotorch-core",
  "ferrotorch-data",
