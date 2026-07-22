@@ -1,0 +1,159 @@
+From 8e3c67301fbe43dd5c4104c5dd98d06f37608b41 Mon Sep 17 00:00:00 2001
+From: Raynor Elgie <elgieraynor@gmail.com>
+Date: Tue, 21 Jul 2026 03:34:38 +0000
+Subject: [PATCH] support tf32
+
+---
+ ferrotorch-gpu/src/blas.rs      | 20 +++++++++++++++++++-
+ ferrotorch-gpu/src/lib.rs       |  2 ++
+ ferrotorch-gpu/src/precision.rs | 33 +++++++++++++++++++++++++++++++++
+ 3 files changed, 54 insertions(+), 1 deletion(-)
+ create mode 100644 ferrotorch-gpu/src/precision.rs
+
+diff --git a/ferrotorch-gpu/src/blas.rs b/ferrotorch-gpu/src/blas.rs
+index 752751c8..72ad1764 100644
+--- a/ferrotorch-gpu/src/blas.rs
++++ b/ferrotorch-gpu/src/blas.rs
+@@ -56,13 +56,14 @@
+ //! | REQ-10 (structured errors / no silent CPU fallback) | SHIPPED | every cuBLAS call in `blas.rs` is wrapped to surface `GpuError::Blas(...)` / `GpuError::Driver(...)`; consumer every caller in `backend_impl.rs` uses `.map_err(Self::map_gpu_err)?` |
+ 
+ #[cfg(feature = "cuda")]
+-use cudarc::cublas::{Gemm, GemmConfig, Gemv, GemvConfig, StridedBatchedConfig, sys};
++use cudarc::cublas::{CudaBlas, Gemm, GemmConfig, Gemv, GemvConfig, StridedBatchedConfig, sys};
+ #[cfg(feature = "cuda")]
+ use cudarc::driver::DevicePtr;
+ 
+ use crate::buffer::CudaBuffer;
+ use crate::device::GpuDevice;
+ use crate::error::{GpuError, GpuResult};
++use crate::precision::MatmulPrecision;
+ #[cfg(feature = "cuda")]
+ use crate::transfer::{alloc_zeros_f32, alloc_zeros_f64};
+ 
+@@ -196,6 +197,7 @@ pub fn gpu_matmul_f32(
+     //   on `device` on line 129. All three pointers are valid on the
+     //   handle's stream.
+     unsafe {
++        apply_matmul_precision(blas)?;
+         blas.gemm(cfg, b.inner(), a.inner(), c.inner_mut())?;
+     }
+ 
+@@ -450,6 +452,7 @@ pub fn gpu_matmul_f32_nt(
+     // - Device residency: `a`/`b` device-checked above; `c` allocated on
+     //   `device`. All three pointers valid on the handle's stream.
+     unsafe {
++        apply_matmul_precision(blas)?;
+         blas.gemm(cfg, b.inner(), a.inner(), c.inner_mut())?;
+     }
+ 
+@@ -662,6 +665,7 @@ pub fn gpu_bmm_f32(
+     // - Aliasing: `a` and `b` are shared `&CudaBuffer<f32>`; `c` is freshly
+     //   allocated and therefore non-aliasing.
+     unsafe {
++        apply_matmul_precision(blas)?;
+         blas.gemm_strided_batched(cfg, b.inner(), a.inner(), c.inner_mut())?;
+     }
+ 
+@@ -1093,6 +1097,7 @@ pub fn gpu_broadcast_bmm_f32(
+         //   is guarded per-run.
+         // - Row-major trick is identical to `gpu_bmm_f32` above.
+         unsafe {
++            apply_matmul_precision(blas)?;
+             blas.gemm_strided_batched(cfg, &b_view, &a_view, &mut c_view)?;
+         }
+     }
+@@ -1959,6 +1964,7 @@ pub fn gpu_matmul_f32_into(
+     //   and output cannot alias.
+     // - `blas` is a valid `Arc<CudaBlas>` from `device.blas()` line 478.
+     unsafe {
++        apply_matmul_precision(blas)?;
+         blas.gemm(cfg, b.inner(), a.inner(), c.inner_mut())?;
+     }
+     Ok(())
+@@ -2040,6 +2046,7 @@ pub fn gpu_bmm_f32_into(
+     //   self-aliasing.
+     // - `blas` is a valid `Arc<CudaBlas>` from `device.blas()` line 532.
+     unsafe {
++        apply_matmul_precision(blas)?;
+         blas.gemm_strided_batched(cfg, b.inner(), a.inner(), c.inner_mut())?;
+     }
+     Ok(())
+@@ -4149,3 +4156,14 @@ mod tests {
+         }
+     }
+ }
++
++fn apply_matmul_precision(blas: &CudaBlas) -> GpuResult<()> {
++    use cudarc::cublas::sys::{cublasSetMathMode, cublasMath_t};
++
++    let mode = match crate::precision::matmul_precision() {
++        MatmulPrecision::Highest => cublasMath_t::CUBLAS_DEFAULT_MATH,
++        MatmulPrecision::High    => cublasMath_t::CUBLAS_TF32_TENSOR_OP_MATH,
++    };
++    unsafe { cublasSetMathMode(*blas.handle(), mode).result()?; }
++    Ok(())
++}
+\ No newline at end of file
+diff --git a/ferrotorch-gpu/src/lib.rs b/ferrotorch-gpu/src/lib.rs
+index b2b2c7e0..b5b496f0 100644
+--- a/ferrotorch-gpu/src/lib.rs
++++ b/ferrotorch-gpu/src/lib.rs
+@@ -189,6 +189,7 @@ pub mod masked_kernels;
+ pub mod memory_guard;
+ pub mod module_cache;
+ pub mod pool;
++pub mod precision;
+ #[cfg(feature = "cuda")]
+ pub mod reduce_arg;
+ pub mod rng;
+@@ -270,6 +271,7 @@ pub use memory_guard::{
+     MemoryReservation, MemoryStats, MemoryWatchdog, OomPolicy, PressureLevel,
+ };
+ pub use pool::{cached_bytes, empty_cache, empty_cache_all, round_len};
++pub use precision::{MatmulPrecision, matmul_precision, with_matmul_precision};
+ pub use rng::{CudaRngManager, PhiloxGenerator, PhiloxState, cuda_rng_manager, fork_rng, join_rng};
+ #[cfg(feature = "cuda")]
+ pub use roll::{gpu_roll_f32, gpu_roll_f64};
+diff --git a/ferrotorch-gpu/src/precision.rs b/ferrotorch-gpu/src/precision.rs
+new file mode 100644
+index 00000000..07f49b8d
+--- /dev/null
++++ b/ferrotorch-gpu/src/precision.rs
+@@ -0,0 +1,33 @@
++//! Thread-scoped controlling for matmul precision
++use std::cell::Cell;
++
++#[derive(Debug, Clone, Copy, PartialEq, Eq)]
++/// Matmul precision enum
++pub enum MatmulPrecision {
++    /// f32, cublas default
++    Highest,
++    /// TF32, pytorch 'high'
++    High,
++}
++
++thread_local! {
++    /// Thread local storage for matmul precision
++    static MATMUL_PRECISION: Cell<MatmulPrecision> = const { Cell::new(MatmulPrecision::Highest) };
++}
++
++/// Get current precision
++pub fn matmul_precision() -> MatmulPrecision { MATMUL_PRECISION.with(|c| c.get()) }
++
++/// Runs f with precision set to p
++pub fn with_matmul_precision<R>(p: MatmulPrecision, f: impl FnOnce() -> R) -> R {
++    struct Guard(MatmulPrecision);
++
++    impl Drop for Guard {
++        /// To restore old when we drop
++        fn drop(&mut self) { MATMUL_PRECISION.with(|c| c.set(self.0));}
++    }
++
++    let _g = Guard(matmul_precision());
++    MATMUL_PRECISION.with(|c| c.set(p)); // Set to p
++    f() // Immediately execute f
++}
+\ No newline at end of file
+-- 
+2.43.0
+
