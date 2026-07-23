@@ -1,17 +1,17 @@
-From 8e3c67301fbe43dd5c4104c5dd98d06f37608b41 Mon Sep 17 00:00:00 2001
+From 1b425f89310c4e907adc47ad0d27a64e9aa34d91 Mon Sep 17 00:00:00 2001
 From: Raynor Elgie <elgieraynor@gmail.com>
 Date: Tue, 21 Jul 2026 03:34:38 +0000
 Subject: [PATCH] support tf32
 
 ---
- ferrotorch-gpu/src/blas.rs      | 20 +++++++++++++++++++-
+ ferrotorch-gpu/src/blas.rs      | 32 +++++++++++++++++++++++++++++++-
  ferrotorch-gpu/src/lib.rs       |  2 ++
  ferrotorch-gpu/src/precision.rs | 33 +++++++++++++++++++++++++++++++++
- 3 files changed, 54 insertions(+), 1 deletion(-)
+ 3 files changed, 66 insertions(+), 1 deletion(-)
  create mode 100644 ferrotorch-gpu/src/precision.rs
 
 diff --git a/ferrotorch-gpu/src/blas.rs b/ferrotorch-gpu/src/blas.rs
-index 752751c8..72ad1764 100644
+index 752751c8..a5997e88 100644
 --- a/ferrotorch-gpu/src/blas.rs
 +++ b/ferrotorch-gpu/src/blas.rs
 @@ -56,13 +56,14 @@
@@ -78,19 +78,31 @@ index 752751c8..72ad1764 100644
          blas.gemm_strided_batched(cfg, b.inner(), a.inner(), c.inner_mut())?;
      }
      Ok(())
-@@ -4149,3 +4156,14 @@ mod tests {
+@@ -4149,3 +4156,26 @@ mod tests {
          }
      }
  }
 +
++thread_local! {
++    // Last applied mode for this thread.
++    static LAST_APPLIED_MODE: std::cell::Cell<Option<MatmulPrecision>> =
++        const { std::cell::Cell::new(None) };
++}
++
 +fn apply_matmul_precision(blas: &CudaBlas) -> GpuResult<()> {
 +    use cudarc::cublas::sys::{cublasSetMathMode, cublasMath_t};
 +
-+    let mode = match crate::precision::matmul_precision() {
++    let want = crate::precision::matmul_precision();
++    if LAST_APPLIED_MODE.with(std::cell::Cell::get) == Some(want) {
++        return Ok(());
++    }
++
++    let mode = match want {
 +        MatmulPrecision::Highest => cublasMath_t::CUBLAS_DEFAULT_MATH,
 +        MatmulPrecision::High    => cublasMath_t::CUBLAS_TF32_TENSOR_OP_MATH,
 +    };
 +    unsafe { cublasSetMathMode(*blas.handle(), mode).result()?; }
++    LAST_APPLIED_MODE.with(|c| c.set(Some(want)));
 +    Ok(())
 +}
 \ No newline at end of file
