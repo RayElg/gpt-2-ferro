@@ -78,34 +78,37 @@ fn do_gpt2(_in_str: &str) -> FerrotorchResult<()> {
     );
 
     // Do the overfit
-    with_matmul_precision(MatmulPrecision::High, || -> FerrotorchResult<()> {
-        for i in 0..50 {
-            let start = Instant::now();
+    autocast(AutocastDtype::BF16, || -> FerrotorchResult<()> {
+        with_matmul_precision(MatmulPrecision::High, || -> FerrotorchResult<()> {
+            for i in 0..50 {
+                let start = Instant::now();
 
-            let (x, y) = data_loader.next_batch::<f32>()?;
-            optimizer.zero_grad();
+                let (x, y) = data_loader.next_batch::<f32>()?;
+                optimizer.zero_grad();
 
-            let logits = gpt.forward(&x)?;
-            let loss = cross_entropy_w_gpu(&logits, &y)?;
+                let logits = gpt.forward(&x)?;
+                let loss = cross_entropy_w_gpu(&logits, &y)?;
 
-            backward(&loss)?;
-            let _total_norm = clip_grad_norm_(&gpt.parameters(), 1.0, 2.0)?;
-            optimizer.step();
+                backward(&loss)?;
+                let _total_norm = clip_grad_norm_(&gpt.parameters(), 1.0, 2.0)?;
+                optimizer.step();
 
-            if let Some(bck) = ferrotorch_core::gpu_dispatch::gpu_backend() {
-                bck.synchronize(0)?; // Sync for timing
+                if let Some(bck) = ferrotorch_core::gpu_dispatch::gpu_backend() {
+                    bck.synchronize(0)?; // Sync for timing
+                }
+
+                let duration = start.elapsed();
+                let tok_s = (b * t) as f64 / duration.as_secs_f64();
+
+                println!(
+                    "step: {i}, loss: {:?}, duration: {:?}, tok_s: {:?}",
+                    loss.data_vec()?,
+                    duration,
+                    tok_s
+                );
             }
-
-            let duration = start.elapsed();
-            let tok_s = (b * t) as f64 / duration.as_secs_f64();
-
-            println!(
-                "step: {i}, loss: {:?}, duration: {:?}, tok_s: {:?}",
-                loss.data_vec()?,
-                duration,
-                tok_s
-            );
-        }
+            Ok(())
+        })?;
         Ok(())
     })?;
 
